@@ -6,7 +6,8 @@ scikit-learn==1.8.0
 xgboost>=2.0.0
 pandas>=1.5.0
 numpy>=1.24.0,<2.0.0
-supabase>=2.0.0
+supabase>=2.10.0
+httpx==0.27.2
 
 # Telegram Bot
 python-telegram-bot[job-queue]==20.7
