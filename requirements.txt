@@ -1,15 +1,15 @@
 streamlit
 plotly
 requests
-scipy>=1.11.0,<1.15.0
-scikit-learn>=1.5.0,<1.7.0
+scipy>=1.14.0
+scikit-learn>=1.5.0
 xgboost>=2.0.0
 pandas>=1.5.0
-numpy>=1.24.0,<2.0.0
+numpy>=2.0.0
 supabase>=2.15.1
-httpx>=0.28.1
+httpx>=0.28.1,<0.29
 # Telegram Bot
-python-telegram-bot[job-queue]==20.7
+python-telegram-bot[job-queue]>=22.0
 # Google Sheets / Drive
 google-auth>=2.23.0
 google-auth-oauthlib>=1.0.0
