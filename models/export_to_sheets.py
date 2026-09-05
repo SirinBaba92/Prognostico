@@ -2,10 +2,54 @@
 Export-Funktionen für Google Sheets (Wettquoten Tipps)
 """
 
+import time
 import streamlit as st
 from datetime import datetime
+from googleapiclient.errors import HttpError
 from data.google_sheets import connect_to_sheets
 from config.constants import EXPORT_SHEET_ID
+
+
+def _execute_with_retry(request, max_retries: int = 5, base_delay: float = 5.0):
+    """
+    Führt einen Google-API-Request aus und wiederholt ihn bei
+    HTTP 429 (Quota exceeded) automatisch mit exponentiellem Backoff.
+
+    Google's Sheets-API-Limit (Standard: 60 Requests/Minute/Nutzer) erholt
+    sich innerhalb eines gleitenden 60-Sekunden-Fensters, daher reicht in
+    der Regel schon eine kurze Wartezeit, um den nächsten Versuch
+    erfolgreich durchzubringen.
+
+    Args:
+        request: Ein noch nicht ausgeführtes Google-API-Request-Objekt
+                 (z.B. service.spreadsheets().get(...)) - .execute() wird
+                 hier intern aufgerufen.
+        max_retries: Maximale Anzahl an Versuchen
+        base_delay: Basis-Wartezeit in Sekunden (verdoppelt sich pro Versuch)
+
+    Returns:
+        Das Ergebnis von request.execute()
+
+    Raises:
+        HttpError: Falls nach allen Versuchen weiterhin ein Fehler auftritt,
+                   oder falls der Fehler kein 429er ist.
+    """
+    for attempt in range(max_retries):
+        try:
+            return request.execute()
+        except HttpError as e:
+            status = getattr(e, "status_code", None)
+            if status is None:
+                status = getattr(getattr(e, "resp", None), "status", None)
+            is_rate_limit = status == 429
+            if not is_rate_limit or attempt == max_retries - 1:
+                raise
+            delay = base_delay * (2**attempt)
+            st.info(
+                f"⏳ Google-API-Limit erreicht, warte {delay:.0f}s und versuche erneut "
+                f"({attempt + 1}/{max_retries})..."
+            )
+            time.sleep(delay)
 
 
 def export_analysis_to_sheets(result: dict, actual_score: str = None) -> bool:
@@ -34,8 +78,8 @@ def export_analysis_to_sheets(result: dict, actual_score: str = None) -> bool:
         sheet_tab_name = match_date_str
 
         # Prüfe ob Tab existiert
-        sheet_metadata = (
-            service.spreadsheets().get(spreadsheetId=EXPORT_SHEET_ID).execute()
+        sheet_metadata = _execute_with_retry(
+            service.spreadsheets().get(spreadsheetId=EXPORT_SHEET_ID)
         )
         sheets = sheet_metadata.get("sheets", [])
         sheet_titles = [s["properties"]["title"] for s in sheets]
@@ -348,9 +392,11 @@ def export_analysis_to_sheets(result: dict, actual_score: str = None) -> bool:
         # Batch Update durchführen
         body = {"valueInputOption": "USER_ENTERED", "data": updates}
 
-        service.spreadsheets().values().batchUpdate(
-            spreadsheetId=EXPORT_SHEET_ID, body=body
-        ).execute()
+        _execute_with_retry(
+            service.spreadsheets().values().batchUpdate(
+                spreadsheetId=EXPORT_SHEET_ID, body=body
+            )
+        )
 
         st.success(f"✅ Export erfolgreich! Zeile {next_row} in '{sheet_tab_name}'")
         return True
@@ -378,11 +424,10 @@ def find_next_free_row(service, sheet_tab_name: str) -> int:
         # Wir prüfen die Block-Startzellen B1, B11, B21, ...
         # Ein Block ist "frei", wenn die Match-Name-Zelle (B{start}) leer ist.
         max_row = 2000
-        result = (
+        result = _execute_with_retry(
             service.spreadsheets()
             .values()
             .get(spreadsheetId=EXPORT_SHEET_ID, range=f"{sheet_tab_name}!B1:B{max_row}")
-            .execute()
         )
 
         values = result.get("values", [])
@@ -413,11 +458,10 @@ def find_match_row(service, sheet_tab_name: str, match_name: str) -> int | None:
     """
     try:
         max_row = 2000
-        resp = (
+        resp = _execute_with_retry(
             service.spreadsheets()
             .values()
             .get(spreadsheetId=EXPORT_SHEET_ID, range=f"{sheet_tab_name}!B1:B{max_row}")
-            .execute()
         )
         values = resp.get("values", [])
 
