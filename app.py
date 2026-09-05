@@ -8,8 +8,6 @@ import streamlit.components.v1 as components
 import pandas as pd
 from datetime import datetime, date, timedelta
 
-st.set_page_config(page_title="Sportwetten-Prognose App", page_icon="⚽", layout="wide")
-
 
 def _scroll_to_analysis_anchor(anchor_id: str = "analysis_results") -> None:
     """Scroll smoothly to a DOM element with the given id."""
@@ -32,22 +30,18 @@ def _scroll_to_analysis_anchor(anchor_id: str = "analysis_results") -> None:
         # Never hard-fail on scrolling
         pass
 
-
 # Config & Settings
 from config.constants import APP_TITLE, APP_ICON, APP_LAYOUT
 from config.settings import initialize_session_state
 
-# Data (Supabase — ersetzt Google Sheets für die Match-Analyse-Datenquelle;
-# data/google_sheets.py & data/parser.py bleiben vorerst bestehen, da sie noch
-# von ui/results_display.py, ui/sheets_ml_integration.py und
-# models/export_to_sheets.py genutzt werden — Migration dieser Stellen folgt
-# in einem späteren Schritt, siehe docs/projekt.md)
-from data.supabase_client import (
-    get_available_dates,
-    get_match_index_for_date,
-    get_full_match_bundle,
+# Data
+from data import (
+    list_daily_sheets_in_folder,
+    list_match_tabs_for_day,
+    read_worksheet_text_by_id,
+    parse_date,
+    DataParser,
 )
-from data.supabase_mapper import map_bundle_to_match_data
 
 # Analysis
 from analysis import validate_match_data, analyze_match_v47_ml
@@ -262,10 +256,8 @@ from ui import (
     add_historical_match_ui,
 )
 
-# Navigator helpers (get_flag_emoji bleibt unverändert nutzbar;
-# build_match_index war Sheet-spezifisch und wird durch
-# supabase_client.get_match_index_for_date() ersetzt)
-from utils.match_index import get_flag_emoji
+# Navigator helpers
+from utils.match_index import build_match_index, get_flag_emoji
 
 # ML
 from ml import TablePositionML
@@ -279,7 +271,7 @@ def main():
     Haupt-Entry-Point der Streamlit App
     """
     # Page Config
-    # st.set_page_config(page_title=APP_TITLE, page_icon=APP_ICON, layout=APP_LAYOUT)
+    st.set_page_config(page_title=APP_TITLE, page_icon=APP_ICON, layout=APP_LAYOUT)
 
     # Session State initialisieren
     initialize_session_state()
@@ -287,7 +279,6 @@ def main():
     # Telegram Bot im Hintergrund starten (nur wenn Token gesetzt)
     try:
         from telegram_bot.bot_runner import start_bot_in_background
-
         start_bot_in_background()
     except Exception:
         pass  # Bot-Fehler sollen die App nie blockieren
@@ -341,6 +332,13 @@ def main():
     current_time = datetime.now()
     st.caption(f"⏱️ Daten-Stand: {current_time.strftime('%d.%m.%Y %H:%M')} Uhr")
 
+    # Lade verfügbare Sheets
+    if "prematch" not in st.secrets or "folder_id" not in st.secrets["prematch"]:
+        st.error("❌ Google Drive Ordner nicht konfiguriert!")
+        st.stop()
+
+    folder_id = st.secrets["prematch"]["folder_id"]
+
     # Refresh Button
     col_refresh, col_info = st.columns([1, 4])
     with col_refresh:
@@ -349,15 +347,31 @@ def main():
             st.cache_data.clear()
             st.rerun()
 
-    # Verfügbare Tage aus Supabase (ersetzt list_daily_sheets_in_folder)
-    available_dates = get_available_dates()
+    # Lade Daily Sheets
+    date_to_id = list_daily_sheets_in_folder(folder_id)
 
-    if not available_dates:
-        st.warning("⚠️ Keine Matches in der Datenbank gefunden!")
+    if not date_to_id:
+        st.warning("⚠️ Keine Sheets im Ordner gefunden!")
         st.stop()
 
     with col_info:
-        st.info(f"📊 {len(available_dates)} Tage mit Daten verfügbar")
+        st.info(f"📊 {len(date_to_id)} Tage mit Daten verfügbar")
+
+    # Datum-Navigation (in Sidebar)
+    # Konvertiere Datums-Strings zu date-Objekten
+    available_dates: list[date] = []
+    for date_str in date_to_id.keys():
+        try:
+            d = parse_date(date_str)
+            available_dates.append(d)
+        except Exception:
+            continue
+
+    available_dates.sort()
+
+    if not available_dates:
+        st.error("❌ Keine gültigen Daten gefunden!")
+        st.stop()
 
     # Session State für ausgewähltes Datum
     if "selected_date" not in st.session_state:
@@ -371,36 +385,44 @@ def main():
                 st.session_state.selected_date = min(future_dates)
             else:
                 st.session_state.selected_date = max(available_dates)
-
-    # Ausgewähltes Datum
-    selected_date = st.session_state.selected_date
-    selected_date_str = selected_date.strftime("%d.%m.%Y")
+# Ausgewähltes Datum
+    selected_date_str = st.session_state.selected_date.strftime("%d.%m.%Y")
     st.success(f"✅ Ausgewähltes Datum: **{selected_date_str}**")
 
-    if selected_date not in available_dates:
+    if selected_date_str not in date_to_id:
         st.error(f"❌ Keine Daten für {selected_date_str} verfügbar!")
         st.stop()
 
-    # Lade Matches für den Tag (ersetzt list_match_tabs_for_day + build_match_index —
-    # ein einzelner DB-Query statt N Sheet-Reads)
-    match_index = get_match_index_for_date(selected_date)
+    sheet_id = date_to_id[selected_date_str]
 
-    if not match_index:
+    # Convenience var (used by navigator)
+    selected_date = st.session_state.selected_date
+
+    # Lade Matches für den Tag
+    match_tabs = list_match_tabs_for_day(sheet_id)
+
+    if not match_tabs:
         st.warning(f"⚠️ Keine Matches für {selected_date_str} gefunden!")
         st.stop()
 
-    st.info(f"🎯 {len(match_index)} Matches verfügbar für {selected_date_str}")
+    st.info(f"🎯 {len(match_tabs)} Matches verfügbar für {selected_date_str}")
+
+    # ================== MATCH NAVIGATOR INDEX (cached) ==================
+    match_index = build_match_index(sheet_id, tuple(match_tabs))
 
     # Sidebar (Navigator + Settings)
     today = date.today()
-    today_count = (
-        len(get_match_index_for_date(today)) if today in available_dates else 0
-    )
+    today_str = today.strftime("%d.%m.%Y")
+    today_count = 0
+    if today_str in date_to_id:
+        _sid_today = date_to_id[today_str]
+        _tabs_today = list_match_tabs_for_day(_sid_today) or []
+        today_count = len(_tabs_today)
 
     def _on_date_change(new_date: date):
         st.session_state.selected_date = new_date
         # schedule sidebar date picker update for next run (avoid modifying widget state after instantiation)
-        st.session_state["_pending_nav_date"] = new_date
+        st.session_state['_pending_nav_date'] = new_date
 
     show_sidebar(
         navigator={
@@ -430,15 +452,13 @@ def main():
     with tab1:
         st.header("⚽ Match-Analyse")
         # UI: Card styling for match list
-        st.markdown(
-            """
+        st.markdown("""
 <style>
 .match-card { padding: 12px 14px; border: 1px solid rgba(49,51,63,0.2); border-radius: 12px; margin-bottom: 10px; }
 .match-meta { opacity: 0.75; font-size: 0.9rem; }
 </style>
-""",
-            unsafe_allow_html=True,
-        )
+""", unsafe_allow_html=True)
+
 
         # Navigator-driven Matchliste (Sidebar steuert Filter/Selection)
         if "nav_view_mode" not in st.session_state:
@@ -449,8 +469,8 @@ def main():
             st.session_state.nav_selected_league = ""
         if "nav_search_query" not in st.session_state:
             st.session_state.nav_search_query = ""
-        if "selected_match_id" not in st.session_state:
-            st.session_state.selected_match_id = ""
+        if "selected_tab" not in st.session_state:
+            st.session_state.selected_tab = ""
 
         view_mode = st.session_state.get("nav_view_mode", "all")
         country_sel = (st.session_state.get("nav_selected_country") or "").strip()
@@ -459,39 +479,22 @@ def main():
 
         filtered = match_index
         if view_mode == "league" and country_sel and league_sel:
-            filtered = [
-                m
-                for m in match_index
-                if (m.get("country") == country_sel and m.get("league") == league_sel)
-            ]
+            filtered = [m for m in match_index if (m.get("country")==country_sel and m.get("league")==league_sel)]
         elif view_mode == "search" and q:
-
             def _hit(m):
-                hay = " ".join(
-                    [
-                        str(m.get("home", "")),
-                        str(m.get("away", "")),
-                        str(m.get("country", "")),
-                        str(m.get("league", "")),
-                        str(m.get("competition", "")),
-                    ]
-                ).lower()
+                hay = " ".join([
+                    str(m.get("home","")), str(m.get("away","")), str(m.get("country","")), str(m.get("league","")), str(m.get("competition","")), str(m.get("tab",""))
+                ]).lower()
                 return q in hay
-
             filtered = [m for m in match_index if _hit(m)]
         # else: all
-        filtered_match_ids = [m.get("match_id") for m in filtered]
-        # Lookup für Anzeige-Labels (z. B. Bulk-Ergebnisliste) statt der rohen match_id
-        match_label_by_id = {
-            m.get("match_id"): f"{m.get('home','')} vs {m.get('away','')}"
-            for m in match_index
-        }
+        filtered_tabs = [m.get("tab") for m in filtered]
 
         title_bits = []
         if view_mode == "league" and league_sel:
             title_bits.append(f"{country_sel} / {league_sel}")
         if view_mode == "search" and q:
-            title_bits.append(f'Suche: "{q}"')
+            title_bits.append(f"Suche: \"{q}\"")
         subtitle = (" – ".join(title_bits)) if title_bits else "Alle Spiele"
         st.subheader(f"🧾 Spiele ({len(filtered)}) · {subtitle}")
 
@@ -501,10 +504,12 @@ def main():
             for m in filtered:
                 home = m.get("home", "")
                 away = m.get("away", "")
-                flag = get_flag_emoji(m.get("country", ""))
+                flag = m.get("flag", "🌍")
                 league = m.get("league", "")
                 kickoff = m.get("kickoff", "")
-                match_id = m.get("match_id")
+                tab = m.get("tab")
+
+                match_key = f"{sheet_id}::{tab}"
 
                 meta = f"{flag} {league}"
                 if kickoff:
@@ -520,61 +525,64 @@ def main():
                     unsafe_allow_html=True,
                 )
 
-                if st.button(
-                    "🎯 Analysieren", key=f"an::{match_id}", use_container_width=True
-                ):
-                    st.session_state.selected_match_id = match_id
-                    st.session_state._trigger_analyze_match_id = match_id
+                if st.button("🎯 Analysieren", key=f"an::{match_key}", use_container_width=True):
+                    st.session_state.selected_tab = tab
+                    st.session_state._trigger_analyze_tab = tab
                     st.session_state._scroll_to_results = True
                     st.rerun()
 
-        selected_match_id = st.session_state.get("selected_match_id") or ""
-        if selected_match_id:
-            st.success(
-                f"✅ Ausgewählt: **{match_label_by_id.get(selected_match_id, selected_match_id)}**"
-            )
+
+        selected_tab = st.session_state.get("selected_tab") or ""
+        if selected_tab:
+            st.success(f"✅ Ausgewählt: **{selected_tab}**")
         else:
             st.info("⬅️ Wähle links (Sidebar) eine Liga oder klicke auf ein Spiel.")
+
 
         # Auto-zeige letzte Analyse (falls vorhanden)
         if "analysis_cache_by_tab" not in st.session_state:
             st.session_state.analysis_cache_by_tab = {}
-        _cache_key = selected_match_id
-        if selected_match_id and _cache_key in st.session_state.analysis_cache_by_tab:
+        _cache_key = f"{sheet_id}::{selected_tab}" if selected_tab else ""
+        if selected_tab and _cache_key in st.session_state.analysis_cache_by_tab:
             st.markdown("<div id='analysis_results'></div>", unsafe_allow_html=True)
             if st.session_state.get("_scroll_to_results"):
                 _scroll_to_analysis_anchor("analysis_results")
                 st.session_state._scroll_to_results = False
             st.markdown("### 🧠 Letztes Analyse-Ergebnis")
             try:
-                display_results(st.session_state.analysis_cache_by_tab[_cache_key])
+                _cached_result = st.session_state.analysis_cache_by_tab[_cache_key]
+                # Immer aktualisieren, falls dieser Cache-Eintrag noch aus einer
+                # älteren Version stammt, die diese Felder nicht gesetzt hat
+                _cached_result['_sheet_id'] = sheet_id
+                _cached_result['_selected_tab'] = selected_tab
+                display_results(_cached_result)
             except Exception as e:
                 st.error(f"❌ Fehler beim Anzeigen der Analyse: {str(e)}")
-                st.info(
-                    "Tipp: Nutze Tab 6 'ML Predictions' für zuverlässige Vorhersagen!"
-                )
+                st.info("Tipp: Nutze Tab 6 'ML Predictions' für zuverlässige Vorhersagen!")
             st.markdown("---")
 
         # Lade Match-Daten
 
         with st.expander("📄 Rohdaten anzeigen"):
-            if not selected_match_id:
+            if not selected_tab:
                 st.info("Bitte zuerst ein Match auswählen.")
             else:
-                _raw_bundle = get_full_match_bundle(selected_match_id)
-                if _raw_bundle:
-                    st.json(_raw_bundle)
+                match_text = read_worksheet_text_by_id(sheet_id, selected_tab)
+                if match_text:
+                    st.text_area("Daten", match_text, height=300)
                 else:
                     st.error("Fehler beim Laden der Daten")
 
         # Analyse-Buttons
 
-        # Auto-Trigger aus Match-Karte (setzt selected_match_id und startet Analyse ohne extra Klick)
-        auto_match_id = st.session_state.pop("_trigger_analyze_match_id", "")
-        auto_analyze = bool(auto_match_id)
-        if auto_match_id:
-            st.session_state.selected_match_id = auto_match_id
-            selected_match_id = auto_match_id
+        # Auto-Trigger aus Match-Karte (setzt selected_tab und startet Analyse ohne extra Klick)
+        auto_tab = st.session_state.pop("_trigger_analyze_tab", "")
+        auto_analyze = bool(auto_tab)
+        if auto_tab:
+            st.session_state.selected_tab = auto_tab
+            selected_tab = auto_tab
+
+        col_single, col_all = st.columns(2)
 
         col_single, col_all = st.columns(2)
 
@@ -582,30 +590,29 @@ def main():
             analyze_single = st.button(
                 "🎯 Analysiere ausgewähltes Match",
                 use_container_width=True,
-                disabled=not bool(selected_match_id),
+                disabled=not bool(selected_tab),
             )
             if analyze_single:
                 st.session_state._scroll_to_results = True
 
         with col_all:
             analyze_all = st.button(
-                f"📊 Analysiere alle {len(filtered_match_ids)} Matches (aktueller Filter)",
+                f"📊 Analysiere alle {len(filtered_tabs)} Matches (aktueller Filter)",
                 use_container_width=True,
-                disabled=not bool(filtered_match_ids),
+                disabled=not bool(filtered_tabs),
             )
 
         # SINGLE MATCH ANALYSE
         if analyze_single or auto_analyze:
-            with st.spinner(
-                f"Analysiere {match_label_by_id.get(selected_match_id, selected_match_id)}..."
-            ):
-                _bundle = get_full_match_bundle(selected_match_id)
+            with st.spinner(f"Analysiere {selected_tab}..."):
+                match_text = read_worksheet_text_by_id(sheet_id, selected_tab)
 
-                if not _bundle:
+                if not match_text:
                     st.error("❌ Fehler beim Laden der Match-Daten")
                 else:
+                    parser = DataParser()
                     try:
-                        match_data = map_bundle_to_match_data(_bundle)
+                        match_data = parser.parse(match_text)
 
                         is_valid, missing = validate_match_data(match_data)
 
@@ -650,9 +657,14 @@ def main():
                         else:
                             result = analyze_match_v47_ml(match_data)
                             result = choose_consistent_predicted_score(result)
-                            # match_id für spätere Verwendung (z. B. ML Predictions Tab, siehe docs/projekt.md)
-                            result["_match_id"] = selected_match_id
                             st.session_state.current_match_result[match_key] = result
+                        # Immer aktualisieren (auch bei Cache-Treffer!) - garantiert
+                        # korrekte Werte für ML Predictions, unabhängig davon, ob
+                        # das Ergebnis frisch berechnet oder aus dem Cache kam
+                        # (verhindert veraltete/fehlende _sheet_id/_selected_tab bei
+                        # älteren Cache-Einträgen).
+                        result['_sheet_id'] = sheet_id
+                        result['_selected_tab'] = selected_tab
                         # Falls aus Cache geladen, Score ggf. anpassen
                         result = choose_consistent_predicted_score(result)
                         # Speichere in Session für Demo-Mode
@@ -662,17 +674,14 @@ def main():
                         match_key = f"{result['match_info']['home']}_{result['match_info']['away']}"
                         st.session_state.current_match_result[match_key] = result
 
-                        # Cache pro Match (für Auto-Anzeige beim nächsten Klick)
+                        # Cache pro Tab (für Auto-Anzeige beim nächsten Klick)
                         if "analysis_cache_by_tab" not in st.session_state:
                             st.session_state.analysis_cache_by_tab = {}
-                        st.session_state.analysis_cache_by_tab[selected_match_id] = (
-                            result
-                        )
+                        _ck = f"{sheet_id}::{selected_tab}"
+                        st.session_state.analysis_cache_by_tab[_ck] = result
 
                         # Zeige Ergebnisse
-                        st.markdown(
-                            "<div id='analysis_results'></div>", unsafe_allow_html=True
-                        )
+                        st.markdown("<div id='analysis_results'></div>", unsafe_allow_html=True)
                         if st.session_state.get("_scroll_to_results"):
                             _scroll_to_analysis_anchor("analysis_results")
                             st.session_state._scroll_to_results = False
@@ -869,38 +878,48 @@ def main():
 
         # BULK ANALYSE
         if analyze_all:
-            st.markdown("---")
-            st.subheader(f"📊 Bulk-Analyse: {len(filtered_match_ids)} Matches")
-
             progress_bar = st.progress(0)
             status_text = st.empty()
 
             all_results = []
 
-            for i, match_id in enumerate(filtered_match_ids):
-                label = match_label_by_id.get(match_id, match_id)
-                status_text.text(
-                    f"Analysiere {i + 1}/{len(filtered_match_ids)}: {label}"
-                )
-                progress_bar.progress((i + 1) / len(filtered_match_ids))
+            for i, tab in enumerate(filtered_tabs):
+                status_text.text(f"Analysiere {i + 1}/{len(filtered_tabs)}: {tab}")
+                progress_bar.progress((i + 1) / len(filtered_tabs))
 
-                bundle = get_full_match_bundle(match_id)
+                match_text = read_worksheet_text_by_id(sheet_id, tab)
 
-                if bundle:
+                if match_text:
+                    parser = DataParser()
                     try:
-                        match_data = map_bundle_to_match_data(bundle)
+                        match_data = parser.parse(match_text)
                         result = analyze_match_v47_ml(match_data)
                         result = choose_consistent_predicted_score(result)
-                        result["_match_id"] = match_id
-                        all_results.append(
-                            {"match_id": match_id, "label": label, "result": result}
-                        )
+                        # Speichere sheet_id und tab für ML Predictions (wie bei Einzelanalyse)
+                        result["_sheet_id"] = sheet_id
+                        result["_selected_tab"] = tab
+                        all_results.append({"tab": tab, "result": result})
 
                     except Exception as e:
-                        st.warning(f"⚠️ Fehler bei {label}: {str(e)}")
+                        st.warning(f"⚠️ Fehler bei {tab}: {str(e)}")
 
             status_text.text("✅ Analyse abgeschlossen!")
 
+            # WICHTIG: Ergebnisse in session_state persistieren, damit sie einen Rerun
+            # überleben (z.B. ausgelöst durch einen Export-Button-Klick weiter unten).
+            # `analyze_all` ist nur im Klick-Run selbst True - ohne diese Persistenz
+            # würde die ganze Bulk-Ansicht (und der Export) beim nächsten Rerun verschwinden.
+            st.session_state["bulk_all_results"] = all_results
+            st.session_state["bulk_analysis_active"] = True
+
+        # Bulk-Ergebnisse anzeigen - läuft bei JEDEM Rerun (nicht nur beim Klick auf
+        # "Analysiere alle"), damit die Export-Buttons innerhalb der Liste nach ihrem
+        # eigenen Rerun nicht verschwinden und der Export tatsächlich ausgeführt wird.
+        if st.session_state.get("bulk_analysis_active"):
+            all_results = st.session_state.get("bulk_all_results", [])
+
+            st.markdown("---")
+            st.subheader(f"📊 Bulk-Analyse: {len(all_results)} Matches")
             st.success(f"✅ {len(all_results)} Matches erfolgreich analysiert!")
 
             # Zeige Risiko-Verteilung
@@ -908,12 +927,10 @@ def main():
 
             # Optional: Zeige alle Ergebnisse
             with st.expander(f"📋 Alle {len(all_results)} Ergebnisse anzeigen"):
-                for item in all_results:
+                for idx, item in enumerate(all_results):
                     with st.container():
-                        st.markdown(f"### {item['label']}")
-                        display_results(
-                            item["result"], key_suffix=f"_{item['match_id']}"
-                        )
+                        st.markdown(f"### {item['tab']}")
+                        display_results(item["result"], key_suffix=f"_{idx}_{item['tab']}")
                         st.markdown("---")
 
             # Export-UI für Bulk-Analyse - OPTIMIERTE VERSION
@@ -929,7 +946,6 @@ def main():
                 col_bulk1, col_bulk2 = st.columns(2)
 
                 def _trigger_bulk_simple_export():
-                    st.session_state["_last_bulk_results"] = all_results
                     st.session_state["_do_bulk_export_simple"] = True
 
                 with col_bulk1:
@@ -947,6 +963,45 @@ def main():
                     st.info(
                         "ℹ️ Für einzelne Exporte bitte in den jeweiligen Match-Analysen exportieren"
                     )
+
+            # Bulk-Export tatsächlich ausführen (klick-sicher nach Render, war vorher
+            # nur als Flag gesetzt worden, aber nirgends verarbeitet)
+            if st.session_state.get("_do_bulk_export_simple"):
+                st.session_state["_do_bulk_export_simple"] = False
+                import time as _time
+
+                from models import export_analysis_to_sheets
+
+                bulk_export_progress = st.progress(0)
+                bulk_export_status = st.empty()
+                success_count = 0
+                fail_count = 0
+                for i, item in enumerate(all_results):
+                    bulk_export_progress.progress((i + 1) / len(all_results))
+                    bulk_export_status.text(
+                        f"Exportiere {i + 1}/{len(all_results)}: {item['tab']}"
+                    )
+                    try:
+                        ok = export_analysis_to_sheets(item["result"])
+                        if ok:
+                            success_count += 1
+                        else:
+                            fail_count += 1
+                    except Exception as e:
+                        fail_count += 1
+                        st.warning(f"⚠️ Fehler beim Export von {item['tab']}: {str(e)}")
+
+                    # Kleine Pause zwischen den Exports, um Googles Sheets-API-Limit
+                    # (60 Lesezugriffe/Minute/Nutzer) bei vielen Matches nicht zu reißen
+                    if i < len(all_results) - 1:
+                        _time.sleep(1.5)
+
+                bulk_export_status.empty()
+                if success_count:
+                    st.success(f"✅ {success_count} Matches erfolgreich exportiert!")
+                    st.balloons()
+                if fail_count:
+                    st.error(f"❌ {fail_count} Exporte fehlgeschlagen")
 
         # Historisches Ergebnis eintragen
         st.markdown("---")
@@ -979,8 +1034,9 @@ def main():
                     ]
 
                     # Lade original MatchData nochmal
-                    _bundle_hist = get_full_match_bundle(selected_match_id)
-                    match_data = map_bundle_to_match_data(_bundle_hist)
+                    match_text = read_worksheet_text_by_id(sheet_id, selected_tab)
+                    parser = DataParser()
+                    match_data = parser.parse(match_text)
 
                     if save_historical_directly(
                         match_data=match_data,
@@ -1239,7 +1295,11 @@ def main():
 
     # ================== TAB 6: ML PREDICTIONS ==================
     with tab6:
-        show_ml_predictions_tab(match_id=st.session_state.get("selected_match_id", ""))
+        # Übergebe sheet_id und selected_tab für Sheets-Integration
+        show_ml_predictions_tab(
+            sheet_id=sheet_id if 'sheet_id' in locals() else None,
+            selected_tab=st.session_state.get('selected_tab', '')
+        )
 
 
 if __name__ == "__main__":
