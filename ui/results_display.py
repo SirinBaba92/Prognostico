@@ -318,6 +318,10 @@ def _display_ml_predictions_inline(result: Dict):
         💡 **ML Predictions mit vollständigen Daten:**
         → Nutze Tab 6 "ML Predictions"
         """)
+        # TEMPORÄR zur Fehlersuche - danach wieder entfernen
+        import traceback
+        with st.expander("🔍 Debug: Warum ML Predictions fehlgeschlagen sind"):
+            st.code(traceback.format_exc())
 
 
 def _show_consensus_analysis(result: Dict, ml_predictions: Dict, ml_scoreline: Dict):
