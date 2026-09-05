@@ -547,7 +547,11 @@ def main():
                 st.session_state._scroll_to_results = False
             st.markdown("### 🧠 Letztes Analyse-Ergebnis")
             try:
-                display_results(st.session_state.analysis_cache_by_tab[_cache_key])
+                _cached_result = st.session_state.analysis_cache_by_tab[_cache_key]
+                # Immer aktualisieren, falls dieser Cache-Eintrag noch aus einer
+                # älteren Version stammt, die dieses Feld nicht gesetzt hat
+                _cached_result["_match_id"] = selected_match_id
+                display_results(_cached_result)
             except Exception as e:
                 st.error(f"❌ Fehler beim Anzeigen der Analyse: {str(e)}")
                 st.info(
@@ -650,9 +654,13 @@ def main():
                         else:
                             result = analyze_match_v47_ml(match_data)
                             result = choose_consistent_predicted_score(result)
-                            # match_id für spätere Verwendung (z. B. ML Predictions Tab, siehe docs/projekt.md)
-                            result["_match_id"] = selected_match_id
                             st.session_state.current_match_result[match_key] = result
+                        # Immer aktualisieren (auch bei Cache-Treffer!) - garantiert
+                        # korrekte Werte für ML Predictions, unabhängig davon, ob
+                        # das Ergebnis frisch berechnet oder aus dem Cache kam
+                        # (verhindert veraltete/fehlende _match_id bei älteren
+                        # Cache-Einträgen).
+                        result["_match_id"] = selected_match_id
                         # Falls aus Cache geladen, Score ggf. anpassen
                         result = choose_consistent_predicted_score(result)
                         # Speichere in Session für Demo-Mode
