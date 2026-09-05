@@ -10,7 +10,7 @@ from typing import Dict, List
 from models.tracking import load_historical_matches_from_sheets
 
 
-def show_poisson_heatmap(result: Dict):
+def show_poisson_heatmap(result: Dict, key_suffix: str = ""):
     """
     Zeigt Poisson-Verteilung als Heatmap mit wahrscheinlichsten Ergebnissen
 
@@ -58,7 +58,7 @@ def show_poisson_heatmap(result: Dict):
         }
     )
 
-    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    st.dataframe(styled_df, use_container_width=True, hide_index=True, key=f"poisson_heatmap_df{key_suffix}")
 
     # KORRIGIERT: Sortiere nach Wahrscheinlichkeit absteigend
     df = df.sort_values("Wahrscheinlichkeit_Raw", ascending=False).reset_index(
@@ -112,7 +112,7 @@ def show_poisson_heatmap(result: Dict):
         ),
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"poisson_chart{key_suffix}")
 
     # Tabelle mit Details - mit besserer Formatierung
     with st.expander("📋 Detaillierte Wahrscheinlichkeiten", expanded=True):
@@ -145,6 +145,7 @@ def show_poisson_heatmap(result: Dict):
             styled_df.style.apply(highlight_top, axis=1),
             use_container_width=True,
             hide_index=True,
+            key=f"poisson_details_df{key_suffix}",
             column_config={
                 "Ergebnis": st.column_config.TextColumn(
                     "Ergebnis", help="Vorhergesagtes Spielergebnis"
@@ -179,7 +180,7 @@ def show_poisson_heatmap(result: Dict):
                 )
 
 
-def show_historical_performance():
+def show_historical_performance(key_suffix: str = ""):
     """
     Zeigt historische ML-Performance (nur wenn Daten vorhanden)
     """
@@ -271,10 +272,10 @@ def show_historical_performance():
         height=400,
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"historical_perf_chart{key_suffix}")
 
 
-def show_confidence_gauge(result: Dict):
+def show_confidence_gauge(result: Dict, key_suffix: str = ""):
     """
     Zeigt Confidence-Level für die Vorhersage
 
@@ -360,7 +361,7 @@ def show_confidence_gauge(result: Dict):
     col1, col2 = st.columns([1, 1])
 
     with col1:
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"confidence_gauge_chart{key_suffix}")
 
     with col2:
         st.markdown("### 📊 Konfidenz-Faktoren")
@@ -378,7 +379,7 @@ def show_confidence_gauge(result: Dict):
             st.warning("⚠️ **Moderate Konfidenz** - Vorsicht bei Einsätzen")
 
 
-def show_team_radar(result: Dict):
+def show_team_radar(result: Dict, key_suffix: str = ""):
     """
     Zeigt Team-Vergleich als Radar/Netzdiagramm
 
@@ -499,7 +500,7 @@ def show_team_radar(result: Dict):
         height=500,
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"team_radar_chart{key_suffix}")
 
     # Detail-Tabelle
     with st.expander("📋 Detaillierte Werte"):
@@ -528,4 +529,4 @@ def show_team_radar(result: Dict):
         }
 
         df = pd.DataFrame(comparison_data)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, use_container_width=True, hide_index=True, key=f"team_radar_df{key_suffix}")
