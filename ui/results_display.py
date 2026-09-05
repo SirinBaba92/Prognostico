@@ -14,18 +14,17 @@ from analysis.validation import check_alerts
 def _display_ml_predictions_inline(result: Dict):
     """
     Zeigt ML Predictions im gleichen Format wie Score-Vorhersage
-    Nutzt die GLEICHEN Match-Daten wie Tab 6!
+    Nutzt die GLEICHEN Sheet-Daten wie Tab 6!
 
     Args:
-        result: Analyse-Ergebnis Dictionary (enthält _match_id)
+        result: Analyse-Ergebnis Dictionary (enthält _sheet_id und _selected_tab)
     """
     try:
         # Importiere benötigte Module
         from ml.football_ml_models import get_ml_models
         from ml.scoreline_predictor import ScorelinePredictor
         from ui.sheets_ml_integration import convert_match_data_to_features
-        from data.supabase_client import get_full_match_bundle
-        from data.supabase_mapper import map_bundle_to_match_data
+        from data import read_worksheet_text_by_id, DataParser
 
         st.subheader("🤖 Machine Learning Prognose")
 
@@ -38,26 +37,29 @@ def _display_ml_predictions_inline(result: Dict):
             )
             return
 
-        # Hole match_id aus result (wurde in app.py gespeichert!)
-        match_id = result.get("_match_id")
+        # Hole sheet_id und tab aus result (wurde in app.py gespeichert!)
+        sheet_id = result.get("_sheet_id")
+        selected_tab = result.get("_selected_tab")
 
-        if not match_id:
+        if not sheet_id or not selected_tab:
             st.info("""
             💡 **Für ML Predictions:**
             → Nutze Tab 6 "ML Predictions" für vollständige Analyse
             """)
             return
 
-        # Lade Match-Daten DIREKT aus Supabase (wie Tab 6!)
+        # Lade Match-Daten DIREKT aus Sheets (wie Tab 6!)
         try:
             with st.spinner("Lade Match-Daten für ML..."):
-                bundle = get_full_match_bundle(match_id)
+                match_text = read_worksheet_text_by_id(sheet_id, selected_tab)
 
-                if not bundle:
+                if not match_text:
                     st.warning("⚠️ Konnte Match-Daten nicht laden")
                     return
 
-                match_data = map_bundle_to_match_data(bundle)
+                # Parse Match-Daten
+                parser = DataParser()
+                match_data = parser.parse(match_text)
 
         except Exception as e:
             st.info(f"""
@@ -320,11 +322,9 @@ def _display_ml_predictions_inline(result: Dict):
 
 def _show_consensus_analysis(result: Dict, ml_predictions: Dict, ml_scoreline: Dict):
     """
-    Zeigt Konsens zwischen SMART-PRECISION und ML
-    NUR wenn SMART-PRECISION Schwellenwerte erreicht:
-    - 1X2: ≥ 50%
-    - Over/Under: ≥ 60%
-    - BTTS: ≥ 60%
+    Zeigt Konsens zwischen SMART-PRECISION und ML.
+    Prüft ausschließlich, ob beide Systeme dieselbe Prediction abgeben -
+    ohne Mindest-Wahrscheinlichkeits-Schwellenwerte.
     """
     try:
         # Extrahiere SMART-PRECISION Predictions
@@ -369,32 +369,18 @@ def _show_consensus_analysis(result: Dict, ml_predictions: Dict, ml_scoreline: D
         )
         ml_score = ml_scoreline.get("scoreline", "N/A") if ml_scoreline else "N/A"
 
-        # Check Konsens MIT SCHWELLENWERTEN!
+        # Check Konsens - reiner Vergleich, ob beide Systeme dasselbe voraussagen
         consensus_items = []
-        weak_items = []  # Items die matchen aber Schwellenwert nicht erreichen
 
-        # 1X2: Nur wenn SMART ≥ 50%
         if smart_1x2 == ml_1x2:
-            if smart_1x2_prob >= 50:
-                consensus_items.append(f"{smart_1x2} ({smart_1x2_prob:.1f}%)")
-            else:
-                weak_items.append(f"{smart_1x2} (nur {smart_1x2_prob:.1f}%, <50%)")
+            consensus_items.append(f"{smart_1x2} ({smart_1x2_prob:.1f}%)")
 
-        # Over/Under: Nur wenn SMART ≥ 60%
         if smart_ou == ml_ou:
-            if smart_ou_prob >= 60:
-                consensus_items.append(f"{smart_ou} ({smart_ou_prob:.1f}%)")
-            else:
-                weak_items.append(f"{smart_ou} (nur {smart_ou_prob:.1f}%, <60%)")
+            consensus_items.append(f"{smart_ou} ({smart_ou_prob:.1f}%)")
 
-        # BTTS: Nur wenn SMART ≥ 60%
         if smart_btts == ml_btts:
-            if smart_btts_prob >= 60:
-                consensus_items.append(f"{smart_btts} ({smart_btts_prob:.1f}%)")
-            else:
-                weak_items.append(f"{smart_btts} (nur {smart_btts_prob:.1f}%, <60%)")
+            consensus_items.append(f"{smart_btts} ({smart_btts_prob:.1f}%)")
 
-        # Score (kein Schwellenwert)
         if smart_score == ml_score:
             consensus_items.append(f"Score: {smart_score}")
 
@@ -406,20 +392,17 @@ def _show_consensus_analysis(result: Dict, ml_predictions: Dict, ml_scoreline: D
                 f"🎯 **HOHE CONFIDENCE!**"
             )
         elif len(consensus_items) == 1:
-            msg = f"### 📊 Konsens-Analyse\n\n**Übereinstimmung:** {consensus_items[0]}\n\n"
-            if weak_items:
-                msg += f"⚠️ **Schwache Matches (Schwellenwert nicht erreicht):**\n{', '.join(weak_items)}\n\n"
-            msg += f"💡 Teilweise Einigkeit - moderate Vorsicht!"
-            st.info(msg)
+            st.info(
+                f"### 📊 Konsens-Analyse\n\n"
+                f"**Übereinstimmung:** {consensus_items[0]}\n\n"
+                f"💡 Teilweise Einigkeit - moderate Vorsicht!"
+            )
         else:
-            msg = f"### ⚠️ Konsens-Analyse\n\n"
-            if weak_items:
-                msg += f"**Schwache Matches (Schwellenwert nicht erreicht):**\n{', '.join(weak_items)}\n\n"
-                msg += f"💡 Predictions matchen, aber Alte Confidence zu niedrig!\n\n"
-            else:
-                msg += f"**Keine Übereinstimmung** zwischen den Systemen.\n\n"
-            msg += f"⚠️ Bei Uneinigkeit: höhere Vorsicht oder Skip!"
-            st.warning(msg)
+            st.warning(
+                f"### ⚠️ Konsens-Analyse\n\n"
+                f"**Keine Übereinstimmung** zwischen den Systemen.\n\n"
+                f"⚠️ Bei Uneinigkeit: höhere Vorsicht oder Skip!"
+            )
 
     except Exception as e:
         # Stilles Ignorieren wenn Konsens nicht berechnet werden kann
@@ -530,7 +513,7 @@ def display_stake_recommendation(
             )
 
 
-def display_simulation_section(result: Dict):
+def display_simulation_section(result: Dict, key_suffix: str = ""):
     """
     Zeigt eine Monte-Carlo-Spielsimulation auf Basis der bereits berechneten
     μ-Werte (result["mu"]). Nutzer wählt die Anzahl der Durchläufe.
@@ -549,12 +532,12 @@ def display_simulation_section(result: Dict):
             options=[1_000, 10_000, 100_000, 1_000_000],
             value=10_000,
             format_func=lambda x: f"{x:,}".replace(",", "."),
-            key=f"sim_n_{result['match_info']['home']}_{result['match_info']['away']}",
+            key=f"sim_n_{result['match_info']['home']}_{result['match_info']['away']}{key_suffix}",
         )
     with col_b:
         run_sim = st.button(
             "▶️ Simulation starten",
-            key=f"sim_run_{result['match_info']['home']}_{result['match_info']['away']}",
+            key=f"sim_run_{result['match_info']['home']}_{result['match_info']['away']}{key_suffix}",
         )
 
     if run_sim:
@@ -585,7 +568,7 @@ def display_simulation_section(result: Dict):
         top_df = pd.DataFrame(
             sim_result["top_scorelines"], columns=["Ergebnis", "Häufigkeit (%)"]
         )
-        st.dataframe(top_df, use_container_width=True, hide_index=True)
+        st.dataframe(top_df, use_container_width=True, hide_index=True, key=f"top_scorelines_df{key_suffix}")
 
         # Vergleich zur direkten Poisson-Berechnung (analyze_match_v47_ml)
         with st.expander("Vergleich zur analytischen Poisson-Berechnung"):
@@ -614,7 +597,7 @@ def display_simulation_section(result: Dict):
                     ],
                 }
             )
-            st.dataframe(comp_df, use_container_width=True, hide_index=True)
+            st.dataframe(comp_df, use_container_width=True, hide_index=True, key=f"comp_df{key_suffix}")
             st.caption(
                 "Beide Werte basieren auf denselben μ-Werten und derselben Poisson-Annahme — "
                 "kleine Abweichungen sind reines Simulationsrauschen und schrumpfen mit mehr Durchgängen."
@@ -627,9 +610,6 @@ def display_results(result: Dict, key_suffix: str = ""):
 
     Args:
         result: Dictionary mit Analyse-Ergebnissen
-        key_suffix: Eindeutiger Suffix für Widget-Keys, nötig wenn display_results()
-            mehrfach auf derselben Seite aufgerufen wird (z. B. Bulk-Analyse-Liste).
-            Leer bei Einzelaufruf (Standardverhalten unverändert).
     """
     st.header(f"🎯 {result['match_info']['home']} vs {result['match_info']['away']}")
     st.caption(
@@ -776,16 +756,16 @@ def display_results(result: Dict, key_suffix: str = ""):
     st.subheader("📤 Export zu Google Sheets")
 
     # Letztes Analyse-Ergebnis speichern (damit Export nach Rerun funktioniert)
-    st.session_state["_last_analysis_result"] = result
+    st.session_state[f"_last_analysis_result{key_suffix}"] = result
 
     def _trigger_simple_export():
-        st.session_state["_do_export_simple"] = True
+        st.session_state[f"_do_export_simple{key_suffix}"] = True
 
     def _trigger_export_with_result():
         h = st.session_state.get(f"exp_home_rd{key_suffix}", 0)
         a = st.session_state.get(f"exp_away_rd{key_suffix}", 0)
-        st.session_state["_export_actual_score"] = f"{h}-{a}"
-        st.session_state["_do_export_with_result"] = True
+        st.session_state[f"_export_actual_score{key_suffix}"] = f"{h}-{a}"
+        st.session_state[f"_do_export_with_result{key_suffix}"] = True
 
     col_export, col_actual = st.columns(2)
     with col_export:
@@ -811,9 +791,9 @@ def display_results(result: Dict, key_suffix: str = ""):
         )
 
     # Exporte ausführen (klick-sicher nach Render)
-    export_result = st.session_state.get("_last_analysis_result")
-    if st.session_state.get("_do_export_simple"):
-        st.session_state["_do_export_simple"] = False
+    export_result = st.session_state.get(f"_last_analysis_result{key_suffix}")
+    if st.session_state.get(f"_do_export_simple{key_suffix}"):
+        st.session_state[f"_do_export_simple{key_suffix}"] = False
         from models import export_analysis_to_sheets
 
         with st.spinner("Exportiere Analyse..."):
@@ -824,9 +804,9 @@ def display_results(result: Dict, key_suffix: str = ""):
         else:
             st.error("❌ Export fehlgeschlagen")
 
-    if st.session_state.get("_do_export_with_result"):
-        st.session_state["_do_export_with_result"] = False
-        actual_score = st.session_state.get("_export_actual_score")
+    if st.session_state.get(f"_do_export_with_result{key_suffix}"):
+        st.session_state[f"_do_export_with_result{key_suffix}"] = False
+        actual_score = st.session_state.get(f"_export_actual_score{key_suffix}")
         from models import export_analysis_to_sheets
 
         with st.spinner(f"Exportiere mit Ergebnis {actual_score}..."):
@@ -908,7 +888,7 @@ def display_results(result: Dict, key_suffix: str = ""):
             )
         )
         fig_risk.update_layout(height=200)
-        st.plotly_chart(fig_risk, use_container_width=True)
+        st.plotly_chart(fig_risk, use_container_width=True, key=f"risk_chart{key_suffix}")
 
     # Einzelne Wett-Risikos
     st.subheader("📊 EINZELNE WETT-RISIKOS")
@@ -1131,11 +1111,11 @@ def display_results(result: Dict, key_suffix: str = ""):
             "font-weight": "bold",
         }
     )
-    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    st.dataframe(styled_df, use_container_width=True, hide_index=True, key=f"markets_df{key_suffix}")
 
     # Monte-Carlo-Simulation
     st.markdown("---")
-    display_simulation_section(result)
+    display_simulation_section(result, key_suffix=key_suffix)
 
     # Visualisierungen
     st.markdown("---")
@@ -1155,21 +1135,22 @@ def display_results(result: Dict, key_suffix: str = ""):
             "📈 Historische Performance",
             "🎲 Confidence-Level",
             "🕸️ Team-Radar",
-        ]
+        ],
+        key=f"viz_tabs{key_suffix}",
     )
 
     with viz_tab1:
-        show_poisson_heatmap(result)
+        show_poisson_heatmap(result, key_suffix=key_suffix)
 
     with viz_tab2:
-        show_historical_performance()
+        show_historical_performance(key_suffix=key_suffix)
 
     with viz_tab3:
-        show_confidence_gauge(result)
+        show_confidence_gauge(result, key_suffix=key_suffix)
 
     with viz_tab4:
         try:
-            show_team_radar(result)
+            show_team_radar(result, key_suffix=key_suffix)
         except Exception as e:
             st.warning(f"⚠️ Radar-Chart nicht verfügbar: {str(e)}")
             st.info("Das Team-Radar-Chart benötigt vollständige Match-Daten.")
