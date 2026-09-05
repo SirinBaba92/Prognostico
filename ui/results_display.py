@@ -42,6 +42,7 @@ def _display_ml_predictions_inline(result: Dict):
         selected_tab = result.get("_selected_tab")
 
         if not sheet_id or not selected_tab:
+            st.caption(f"🔍 Debug: sheet_id={sheet_id!r}, selected_tab={selected_tab!r}")
             st.info("""
             💡 **Für ML Predictions:**
             → Nutze Tab 6 "ML Predictions" für vollständige Analyse
