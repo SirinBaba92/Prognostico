@@ -14,17 +14,18 @@ from analysis.validation import check_alerts
 def _display_ml_predictions_inline(result: Dict):
     """
     Zeigt ML Predictions im gleichen Format wie Score-Vorhersage
-    Nutzt die GLEICHEN Sheet-Daten wie Tab 6!
+    Nutzt die GLEICHEN Match-Daten wie Tab 6!
 
     Args:
-        result: Analyse-Ergebnis Dictionary (enthält _sheet_id und _selected_tab)
+        result: Analyse-Ergebnis Dictionary (enthält _match_id)
     """
     try:
         # Importiere benötigte Module
         from ml.football_ml_models import get_ml_models
         from ml.scoreline_predictor import ScorelinePredictor
         from ui.sheets_ml_integration import convert_match_data_to_features
-        from data import read_worksheet_text_by_id, DataParser
+        from data.supabase_client import get_full_match_bundle
+        from data.supabase_mapper import map_bundle_to_match_data
 
         st.subheader("🤖 Machine Learning Prognose")
 
@@ -37,29 +38,26 @@ def _display_ml_predictions_inline(result: Dict):
             )
             return
 
-        # Hole sheet_id und tab aus result (wurde in app.py gespeichert!)
-        sheet_id = result.get("_sheet_id")
-        selected_tab = result.get("_selected_tab")
+        # Hole match_id aus result (wurde in app.py gespeichert!)
+        match_id = result.get("_match_id")
 
-        if not sheet_id or not selected_tab:
+        if not match_id:
             st.info("""
             💡 **Für ML Predictions:**
             → Nutze Tab 6 "ML Predictions" für vollständige Analyse
             """)
             return
 
-        # Lade Match-Daten DIREKT aus Sheets (wie Tab 6!)
+        # Lade Match-Daten DIREKT aus Supabase (wie Tab 6!)
         try:
             with st.spinner("Lade Match-Daten für ML..."):
-                match_text = read_worksheet_text_by_id(sheet_id, selected_tab)
+                bundle = get_full_match_bundle(match_id)
 
-                if not match_text:
+                if not bundle:
                     st.warning("⚠️ Konnte Match-Daten nicht laden")
                     return
 
-                # Parse Match-Daten
-                parser = DataParser()
-                match_data = parser.parse(match_text)
+                match_data = map_bundle_to_match_data(bundle)
 
         except Exception as e:
             st.info(f"""
