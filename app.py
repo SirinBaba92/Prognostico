@@ -869,9 +869,6 @@ def main():
 
         # BULK ANALYSE
         if analyze_all:
-            st.markdown("---")
-            st.subheader(f"📊 Bulk-Analyse: {len(filtered_match_ids)} Matches")
-
             progress_bar = st.progress(0)
             status_text = st.empty()
 
@@ -901,6 +898,23 @@ def main():
 
             status_text.text("✅ Analyse abgeschlossen!")
 
+            # WICHTIG: Ergebnisse in session_state persistieren, damit sie einen
+            # Rerun überleben (z.B. ausgelöst durch einen Export-Button-Klick
+            # weiter unten). `analyze_all` ist nur im Klick-Run selbst True - ohne
+            # diese Persistenz würde die ganze Bulk-Ansicht (und der Export) beim
+            # nächsten Rerun verschwinden.
+            st.session_state["bulk_all_results"] = all_results
+            st.session_state["bulk_analysis_active"] = True
+
+        # Bulk-Ergebnisse anzeigen - läuft bei JEDEM Rerun (nicht nur beim Klick
+        # auf "Analysiere alle"), damit die Export-Buttons innerhalb der Liste
+        # nach ihrem eigenen Rerun nicht verschwinden und der Export tatsächlich
+        # ausgeführt wird.
+        if st.session_state.get("bulk_analysis_active"):
+            all_results = st.session_state.get("bulk_all_results", [])
+
+            st.markdown("---")
+            st.subheader(f"📊 Bulk-Analyse: {len(all_results)} Matches")
             st.success(f"✅ {len(all_results)} Matches erfolgreich analysiert!")
 
             # Zeige Risiko-Verteilung
@@ -929,7 +943,6 @@ def main():
                 col_bulk1, col_bulk2 = st.columns(2)
 
                 def _trigger_bulk_simple_export():
-                    st.session_state["_last_bulk_results"] = all_results
                     st.session_state["_do_bulk_export_simple"] = True
 
                 with col_bulk1:
@@ -947,6 +960,47 @@ def main():
                     st.info(
                         "ℹ️ Für einzelne Exporte bitte in den jeweiligen Match-Analysen exportieren"
                     )
+
+            # Bulk-Export tatsächlich ausführen (klick-sicher nach Render, war
+            # vorher nur als Flag gesetzt worden, aber nirgends verarbeitet)
+            if st.session_state.get("_do_bulk_export_simple"):
+                st.session_state["_do_bulk_export_simple"] = False
+                import time as _time
+
+                from models import export_analysis_to_sheets
+
+                bulk_export_progress = st.progress(0)
+                bulk_export_status = st.empty()
+                success_count = 0
+                fail_count = 0
+                for i, item in enumerate(all_results):
+                    bulk_export_progress.progress((i + 1) / len(all_results))
+                    bulk_export_status.text(
+                        f"Exportiere {i + 1}/{len(all_results)}: {item['label']}"
+                    )
+                    try:
+                        ok = export_analysis_to_sheets(item["result"])
+                        if ok:
+                            success_count += 1
+                        else:
+                            fail_count += 1
+                    except Exception as e:
+                        fail_count += 1
+                        st.warning(
+                            f"⚠️ Fehler beim Export von {item['label']}: {str(e)}"
+                        )
+
+                    # Kleine Pause zwischen den Exports, um Googles Sheets-API-Limit
+                    # (60 Lesezugriffe/Minute/Nutzer) bei vielen Matches nicht zu reißen
+                    if i < len(all_results) - 1:
+                        _time.sleep(1.5)
+
+                bulk_export_status.empty()
+                if success_count:
+                    st.success(f"✅ {success_count} Matches erfolgreich exportiert!")
+                    st.balloons()
+                if fail_count:
+                    st.error(f"❌ {fail_count} Exporte fehlgeschlagen")
 
         # Historisches Ergebnis eintragen
         st.markdown("---")
