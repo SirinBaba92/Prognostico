@@ -103,14 +103,17 @@ class FootballMLModels:
             
             # Erstelle DataFrame
             feature_dict = {}
-            
+            defaults = self.feature_config.get('feature_defaults', {})
+
             for feature in features:
                 # Versuche Feature aus match_data zu holen
                 if feature in match_data:
                     feature_dict[feature] = match_data[feature]
                 else:
-                    # Default-Wert (Median oder 0)
-                    feature_dict[feature] = 0
+                    # Fehlt (z.B. bei manueller Eingabe): Trainings-Median
+                    # statt hartem 0 -- ein fehlendes xG/Possession-Feld auf
+                    # 0 zu setzen waere ein extremer, unrealistischer Wert.
+                    feature_dict[feature] = defaults.get(feature, 0)
             
             df = pd.DataFrame([feature_dict])
             
