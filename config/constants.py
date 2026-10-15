@@ -60,7 +60,7 @@ APP_ICON = "⚽"
 APP_LAYOUT = "wide"
 
 # Export Sheet
-EXPORT_SHEET_ID = "1ycsgPdfFal2pS7pwMlTgTRcXwy_22QFZLb6ZZ85zxNE"
+EXPORT_SHEET_ID = "1ebuhwqx6Lc9VEF52bEbFjbzImDe2hA1IInAVwnZGVeQ"
 
 # Version Info
 APP_VERSION = "v6.0"
