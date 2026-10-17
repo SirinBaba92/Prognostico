@@ -614,40 +614,56 @@ def main():
             st.markdown("---")
 
         # ==========================================
-        # MATCH LIST
+        # MATCH LIST (INTERAKTIVE TABELLE)
         # ==========================================
         if not filtered:
             st.warning("Keine Spiele für den aktuellen Filter gefunden.")
         else:
+            # DataFrame für die interaktive Tabelle erstellen
+            df_data = []
             for m in filtered:
-                home = m.get("home", "")
-                away = m.get("away", "")
                 flag = get_flag_emoji(m.get("country", ""))
-                league = m.get("league", "")
-                kickoff = m.get("kickoff", "")
-                match_id = m.get("match_id")
-
-                meta = f"{flag} {league}"
-                if kickoff:
-                    meta += f" · ⏱️ {kickoff}"
-
-                st.markdown(
-                    f"""
-<div class='match-card'>
-  <div><b>{home} vs {away}</b></div>
-  <div class='match-meta'>{meta}</div>
-</div>
-""",
-                    unsafe_allow_html=True,
-                )
-
-                if st.button(
-                    "🎯 Analysieren", key=f"an::{match_id}", use_container_width=True
-                ):
+                df_data.append({
+                    "match_id": m.get("match_id"),
+                    "Land": f"{flag} {m.get('country', '')}",
+                    "Liga": m.get("league", ""),
+                    "Heim": m.get("home", ""),
+                    "Auswärts": m.get("away", ""),
+                    "Anstoß": m.get("kickoff", ""),
+                })
+            
+            df = pd.DataFrame(df_data)
+            
+            # Interaktive Tabelle anzeigen (viel schneller als 195 Buttons)
+            event = st.dataframe(
+                df,
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+                column_config={
+                    "match_id": None, # Versteckt die ID in der Tabelle
+                    "Land": st.column_config.TextColumn("Land", width="small"),
+                    "Liga": st.column_config.TextColumn("Liga", width="medium"),
+                    "Heim": st.column_config.TextColumn("Heim", width="medium"),
+                    "Auswärts": st.column_config.TextColumn("Auswärts", width="medium"),
+                    "Anstoß": st.column_config.TextColumn("⏱️ Anstoß", width="small"),
+                }
+            )
+            
+            # Wenn der User auf eine Zeile klickt
+            if event.selection.rows:
+                selected_idx = event.selection.rows[0]
+                selected_row = df.iloc[selected_idx]
+                match_id = selected_row["match_id"]
+                
+                # Um doppelte Reruns zu vermeiden, prüfen wir, ob es ein neuer Klick ist
+                if st.session_state.get("_last_table_selection") != match_id:
+                    st.session_state["_last_table_selection"] = match_id
                     st.session_state.selected_match_id = match_id
                     st.session_state._trigger_analyze_match_id = match_id
                     st.session_state._scroll_to_results = True
-                    st.rerun()
+                    # Kein manuelles st.rerun() nötig, da on_select="rerun" das automatisch macht
 
         selected_match_id = st.session_state.get("selected_match_id") or ""
         if selected_match_id:
