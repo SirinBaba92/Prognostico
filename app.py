@@ -490,6 +490,132 @@ def main():
         subtitle = (" – ".join(title_bits)) if title_bits else "Alle Spiele"
         st.subheader(f"🧾 Spiele ({len(filtered)}) · {subtitle}")
 
+        # ==========================================
+        # BULK SETUP & BUTTON (GANZ OBEN)
+        # ==========================================
+        if "bulk_batch_offset" not in st.session_state:
+            st.session_state.bulk_batch_offset = 0
+        if "bulk_all_results" not in st.session_state:
+            st.session_state.bulk_all_results = []
+            
+        total_matches = len(filtered_match_ids)
+        offset = st.session_state.bulk_batch_offset
+        
+        # Wenn sich der Filter ändert (z.B. anderer Tag, andere Liga), setzen wir den Zähler zurück
+        if "last_filtered_ids" not in st.session_state or st.session_state.last_filtered_ids != filtered_match_ids:
+            st.session_state.bulk_batch_offset = 0
+            st.session_state.bulk_all_results = []
+            st.session_state.last_filtered_ids = filtered_match_ids
+            offset = 0
+
+        batch_size = 50
+        remaining = total_matches - offset
+        analyze_and_export = False
+
+        if total_matches > 0:
+            if remaining > 0:
+                batch_num = (offset // batch_size) + 1
+                matches_in_this_batch = min(batch_size, remaining)
+                btn_label = f"🚀 Analysiere & Exportiere Block {batch_num} ({matches_in_this_batch} Matches)"
+                analyze_and_export = st.button(btn_label, use_container_width=True, type="primary")
+            else:
+                st.button("✅ Alle Matches abgearbeitet", use_container_width=True, disabled=True)
+                if st.button("🔄 Bulk-Prozess zurücksetzen", use_container_width=True):
+                    st.session_state.bulk_batch_offset = 0
+                    st.session_state.bulk_all_results = []
+                    st.rerun()
+            
+            st.markdown("---")
+
+        # ==========================================
+        # BULK ANALYSE & EXPORT EXECUTION
+        # ==========================================
+        if analyze_and_export:
+            start_idx = offset
+            end_idx = min(start_idx + batch_size, total_matches)
+            chunk_ids = filtered_match_ids[start_idx:end_idx]
+
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            batch_results = []
+
+            # 1. ANALYSE-PHASE
+            for i, match_id in enumerate(chunk_ids):
+                label = match_label_by_id.get(match_id, match_id)
+                status_text.text(f"Analysiere {start_idx + i + 1}/{total_matches}: {label}")
+                progress_bar.progress((i + 1) / len(chunk_ids))
+
+                bundle = get_full_match_bundle(match_id)
+                if bundle:
+                    try:
+                        match_data = map_bundle_to_match_data(bundle)
+                        result = analyze_match_v47_ml(match_data)
+                        result = choose_consistent_predicted_score(result)
+                        result["_match_id"] = match_id
+                        batch_results.append({"match_id": match_id, "label": label, "result": result})
+                    except Exception as e:
+                        st.warning(f"⚠️ Fehler bei Analyse von {label}: {str(e)}")
+
+            # 2. EXPORT-PHASE
+            success_count = 0
+            fail_count = 0
+            if batch_results:
+                status_text.text(f"Exportiere {len(batch_results)} Matches zu Google Sheets...")
+                export_progress = st.progress(0)
+                
+                from models import export_analysis_to_sheets
+                import time as _time
+
+                for i, item in enumerate(batch_results):
+                    export_progress.progress((i + 1) / len(batch_results))
+                    status_text.text(f"Exportiere {i + 1}/{len(batch_results)}: {item['label']}")
+                    try:
+                        ok = export_analysis_to_sheets(item["result"])
+                        if ok:
+                            success_count += 1
+                        else:
+                            fail_count += 1
+                    except Exception as e:
+                        fail_count += 1
+                        st.warning(f"⚠️ Export-Fehler bei {item['label']}: {str(e)}")
+
+                    # Pause für Google API Limit (60 Reads/Minute)
+                    if i < len(batch_results) - 1:
+                        _time.sleep(1.5)
+
+            # 3. ABSCHLUSS & STATE UPDATE
+            st.session_state.bulk_all_results.extend(batch_results)
+            st.session_state.bulk_batch_offset += len(chunk_ids)
+            st.session_state["bulk_analysis_active"] = True
+
+            status_text.text(f"✅ Block abgeschlossen! ({success_count} exportiert, {fail_count} Fehler)")
+            _time.sleep(1.5)
+            st.rerun()
+
+        # ==========================================
+        # BISHERIGE ERGEBNISSE ANZEIGEN
+        # ==========================================
+        if st.session_state.get("bulk_analysis_active") and st.session_state.get("bulk_all_results"):
+            all_results = st.session_state.get("bulk_all_results", [])
+            st.subheader(f"📊 Bisher analysiert: {len(all_results)} Matches")
+            st.success(f"✅ {len(all_results)} Matches erfolgreich analysiert und exportiert!")
+            
+            display_risk_distribution(all_results)
+            
+            with st.expander(f"📋 Alle {len(all_results)} Ergebnisse anzeigen"):
+                for item in all_results:
+                    with st.container():
+                        st.markdown(f"### {item['label']}")
+                        display_results(
+                            item["result"], key_suffix=f"_{item['match_id']}"
+                        )
+                        st.markdown("---")
+            st.markdown("---")
+
+        # ==========================================
+        # MATCH LIST
+        # ==========================================
         if not filtered:
             st.warning("Keine Spiele für den aktuellen Filter gefunden.")
         else:
@@ -575,49 +701,15 @@ def main():
             st.session_state.selected_match_id = auto_match_id
             selected_match_id = auto_match_id
 
-        col_single, col_all = st.columns(2)
-
-        with col_single:
-            analyze_single = st.button(
-                "🎯 Analysiere ausgewähltes Match",
-                use_container_width=True,
-                disabled=not bool(selected_match_id),
-            )
-            if analyze_single:
-                st.session_state._scroll_to_results = True
-
-        # --- BATCH SETUP FÜR BULK ---
-        if "bulk_batch_offset" not in st.session_state:
-            st.session_state.bulk_batch_offset = 0
-        if "bulk_all_results" not in st.session_state:
-            st.session_state.bulk_all_results = []
-            
-        total_matches = len(filtered_match_ids)
-        offset = st.session_state.bulk_batch_offset
-        
-        # Wenn sich der Filter ändert (z.B. anderer Tag, andere Liga), setzen wir den Zähler zurück
-        if "last_filtered_ids" not in st.session_state or st.session_state.last_filtered_ids != filtered_match_ids:
-            st.session_state.bulk_batch_offset = 0
-            st.session_state.bulk_all_results = []
-            st.session_state.last_filtered_ids = filtered_match_ids
-            offset = 0
-
-        batch_size = 50
-        remaining = total_matches - offset
-
-        with col_all:
-            if remaining > 0:
-                batch_num = (offset // batch_size) + 1
-                matches_in_this_batch = min(batch_size, remaining)
-                btn_label = f"🚀 Analysiere & Exportiere Block {batch_num} ({matches_in_this_batch} Matches)"
-                analyze_and_export = st.button(btn_label, use_container_width=True)
-            else:
-                st.button("✅ Alle Matches abgearbeitet", use_container_width=True, disabled=True)
-                analyze_and_export = False
-                if st.button("🔄 Bulk-Prozess zurücksetzen", use_container_width=True):
-                    st.session_state.bulk_batch_offset = 0
-                    st.session_state.bulk_all_results = []
-                    st.rerun()
+        # Einzel-Analyse Button (nur für das ausgewählte Match)
+        analyze_single = st.button(
+            "🎯 Analysiere ausgewähltes Match",
+            use_container_width=True,
+            disabled=not bool(selected_match_id),
+            key="btn_single_analyze"
+        )
+        if analyze_single:
+            st.session_state._scroll_to_results = True
 
         # SINGLE MATCH ANALYSE
         if analyze_single or auto_analyze:
@@ -895,96 +987,6 @@ def main():
                             st.session_state.demo_bet_options = []
                             st.balloons()
                             st.rerun()
-
-        # ==========================================
-        # BULK ANALYSE & EXPORT (IN 50ER BLÖCKEN)
-        # ==========================================
-        if analyze_and_export:
-            start_idx = offset
-            end_idx = min(start_idx + batch_size, total_matches)
-            chunk_ids = filtered_match_ids[start_idx:end_idx]
-
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-
-            batch_results = []
-
-            # 1. ANALYSE-PHASE
-            for i, match_id in enumerate(chunk_ids):
-                label = match_label_by_id.get(match_id, match_id)
-                status_text.text(f"Analysiere {start_idx + i + 1}/{total_matches}: {label}")
-                progress_bar.progress((i + 1) / len(chunk_ids))
-
-                bundle = get_full_match_bundle(match_id)
-                if bundle:
-                    try:
-                        match_data = map_bundle_to_match_data(bundle)
-                        result = analyze_match_v47_ml(match_data)
-                        result = choose_consistent_predicted_score(result)
-                        result["_match_id"] = match_id
-                        batch_results.append({"match_id": match_id, "label": label, "result": result})
-                    except Exception as e:
-                        st.warning(f"⚠️ Fehler bei Analyse von {label}: {str(e)}")
-
-            # 2. EXPORT-PHASE
-            if batch_results:
-                status_text.text(f"Exportiere {len(batch_results)} Matches zu Google Sheets...")
-                export_progress = st.progress(0)
-                
-                from models import export_analysis_to_sheets
-                import time as _time
-                
-                success_count = 0
-                fail_count = 0
-
-                for i, item in enumerate(batch_results):
-                    export_progress.progress((i + 1) / len(batch_results))
-                    status_text.text(f"Exportiere {i + 1}/{len(batch_results)}: {item['label']}")
-                    try:
-                        ok = export_analysis_to_sheets(item["result"])
-                        if ok:
-                            success_count += 1
-                        else:
-                            fail_count += 1
-                    except Exception as e:
-                        fail_count += 1
-                        st.warning(f"⚠️ Export-Fehler bei {item['label']}: {str(e)}")
-
-                    # Pause für Google API Limit (60 Reads/Minute)
-                    if i < len(batch_results) - 1:
-                        _time.sleep(1.5)
-
-            # 3. ABSCHLUSS & STATE UPDATE
-            st.session_state.bulk_all_results.extend(batch_results)
-            st.session_state.bulk_batch_offset += len(chunk_ids)
-            st.session_state["bulk_analysis_active"] = True
-
-            status_text.text(f"✅ Block abgeschlossen! ({success_count} exportiert, {fail_count} Fehler)")
-            _time.sleep(1.5)
-            st.rerun()
-
-        # ==========================================
-        # ANZEIGE DER BISHERIGEN ERGEBNISSE
-        # ==========================================
-        if st.session_state.get("bulk_analysis_active") and st.session_state.get("bulk_all_results"):
-            all_results = st.session_state.get("bulk_all_results", [])
-
-            st.markdown("---")
-            st.subheader(f"📊 Bisher analysiert: {len(all_results)} Matches")
-            st.success(f"✅ {len(all_results)} Matches erfolgreich analysiert und exportiert!")
-
-            # Zeige Risiko-Verteilung
-            display_risk_distribution(all_results)
-
-            # Optional: Zeige alle Ergebnisse
-            with st.expander(f"📋 Alle {len(all_results)} Ergebnisse anzeigen"):
-                for item in all_results:
-                    with st.container():
-                        st.markdown(f"### {item['label']}")
-                        display_results(
-                            item["result"], key_suffix=f"_{item['match_id']}"
-                        )
-                        st.markdown("---")
 
         # Historisches Ergebnis eintragen
         st.markdown("---")
