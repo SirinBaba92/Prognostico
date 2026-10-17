@@ -553,6 +553,7 @@ def main():
                         result = analyze_match_v47_ml(match_data)
                         result = choose_consistent_predicted_score(result)
                         result["_match_id"] = match_id
+                        result["_match_data"] = match_data # <-- NEU (Schritt 6)
                         batch_results.append({"match_id": match_id, "label": label, "result": result})
                     except Exception as e:
                         st.warning(f"⚠️ Fehler bei Analyse von {label}: {str(e)}")
@@ -790,6 +791,7 @@ def main():
                         # (verhindert veraltete/fehlende _match_id bei älteren
                         # Cache-Einträgen).
                         result["_match_id"] = selected_match_id
+                        result["_match_data"] = match_data # <-- NEU (Schritt 6)
                         # Falls aus Cache geladen, Score ggf. anpassen
                         result = choose_consistent_predicted_score(result)
                         # Speichere in Session für Demo-Mode
