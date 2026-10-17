@@ -10,6 +10,46 @@ from data.google_sheets import get_tracking_sheet_id, connect_to_sheets
 from models.tracking import update_match_result_in_sheets
 from utils.match_index import group_matches_by_country_league
 
+@st.cache_data(ttl=60)
+def _get_pending_matches(sheet_id: str):
+    """
+    Liest die offenen Predictions (Status PENDING) aus dem PREDICTIONS-Sheet.
+    Gecacht für 60 Sekunden, damit die Sidebar nicht bei jedem Rerun
+    eine neue Google-API-Abfrage macht.
+    """
+    pending_matches = []
+    try:
+        service = connect_to_sheets(readonly=True)
+        if service:
+            result = (
+                service.spreadsheets()
+                .values()
+                .get(spreadsheetId=sheet_id, range="PREDICTIONS!A:W")
+                .execute()
+            )
+
+            values = result.get("values", [])
+
+            for i, row in enumerate(values):
+                if i == 0:
+                    continue
+
+                if len(row) > 16 and row[16] == "PENDING":
+                    match_str = row[2] if len(row) > 2 else ""
+                    date_str = row[0] if len(row) > 0 else ""
+                    predicted_score = row[3] if len(row) > 3 else ""
+
+                    pending_matches.append(
+                        {
+                            "match": match_str,
+                            "date": date_str,
+                            "predicted": predicted_score,
+                        }
+                    )
+    except Exception as e:
+        st.error(f"Fehler beim Laden der Predictions: {e}")
+
+    return pending_matches
 
 def show_sidebar(navigator: dict | None = None):
     """
@@ -227,37 +267,8 @@ def show_sidebar(navigator: dict | None = None):
         pending_matches = []
 
         if sheet_id:
-            try:
-                service = connect_to_sheets(readonly=True)
-                if service:
-                    result = (
-                        service.spreadsheets()
-                        .values()
-                        .get(spreadsheetId=sheet_id, range="PREDICTIONS!A:W")
-                        .execute()
-                    )
-
-                    values = result.get("values", [])
-
-                    for i, row in enumerate(values):
-                        if i == 0:
-                            continue
-
-                        if len(row) > 16 and row[16] == "PENDING":
-                            match_str = row[2] if len(row) > 2 else ""
-                            date_str = row[0] if len(row) > 0 else ""
-                            predicted_score = row[3] if len(row) > 3 else ""
-
-                            pending_matches.append(
-                                {
-                                    "match": match_str,
-                                    "date": date_str,
-                                    "predicted": predicted_score,
-                                }
-                            )
-
-            except Exception as e:
-                st.error(f"Fehler beim Laden der Predictions: {e}")
+            # Nutzt die gecachte Funktion, um Google-API-Abfragen zu minimieren
+            pending_matches = _get_pending_matches(sheet_id)
 
         if pending_matches:
             st.caption(f"🔴 {len(pending_matches)} offene Vorhersagen")
@@ -287,6 +298,7 @@ def show_sidebar(navigator: dict | None = None):
                 try:
                     update_match_result_in_sheets(selected_match, actual_score, status)
                     st.success("✅ Ergebnis gespeichert!")
+                    st.cache_data.clear()  # Cache leeren, damit die Liste neu geladen wird
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ Fehler beim Speichern: {e}")
