@@ -10,7 +10,6 @@ from collections import Counter
 from models.risk_management import calculate_stake_recommendation
 from analysis.validation import check_alerts
 
-
 def _display_ml_predictions_inline(result: Dict):
     """
     Zeigt ML Predictions im gleichen Format wie Score-Vorhersage
@@ -48,26 +47,30 @@ def _display_ml_predictions_inline(result: Dict):
             """)
             return
 
-        # Lade Match-Daten DIREKT aus Supabase (wie Tab 6!)
-        try:
-            with st.spinner("Lade Match-Daten für ML..."):
-                bundle = get_full_match_bundle(match_id)
+        # NEU: Prüfe, ob match_data bereits im result vorhanden ist
+        match_data = result.get("_match_data")
 
-                if not bundle:
-                    st.warning("⚠️ Konnte Match-Daten nicht laden")
-                    return
+        if not match_data:
+            # Fallback: Lade Match-Daten DIREKT aus Supabase (wie Tab 6!)
+            try:
+                with st.spinner("Lade Match-Daten für ML..."):
+                    bundle = get_full_match_bundle(match_id)
 
-                match_data = map_bundle_to_match_data(bundle)
+                    if not bundle:
+                        st.warning("⚠️ Konnte Match-Daten nicht laden")
+                        return
 
-        except Exception as e:
-            st.info(f"""
-            💡 **ML Predictions nicht verfügbar**
-            
-            Fehler beim Laden: {str(e)}
-            
-            → Nutze Tab 6 "ML Predictions" für vollständige Analyse
-            """)
-            return
+                    match_data = map_bundle_to_match_data(bundle)
+
+            except Exception as e:
+                st.info(f"""
+                💡 **ML Predictions nicht verfügbar**
+                
+                Fehler beim Laden: {str(e)}
+                
+                → Nutze Tab 6 "ML Predictions" für vollständige Analyse
+                """)
+                return
 
         # Konvertiere zu Features (GLEICHE Funktion wie Tab 6!)
         features = convert_match_data_to_features(match_data)
@@ -317,7 +320,6 @@ def _display_ml_predictions_inline(result: Dict):
         → Nutze Tab 6 "ML Predictions"
         """)
 
-
 def _show_consensus_analysis(result: Dict, ml_predictions: Dict, ml_scoreline: Dict):
     """
     Zeigt Konsens zwischen SMART-PRECISION und ML.
@@ -405,7 +407,6 @@ def _show_consensus_analysis(result: Dict, ml_predictions: Dict, ml_scoreline: D
     except Exception as e:
         # Stilles Ignorieren wenn Konsens nicht berechnet werden kann
         pass
-
 
 def display_stake_recommendation(
     risk_score: int, odds: float, market_name: str, match_info: str = ""
@@ -510,7 +511,6 @@ def display_stake_recommendation(
                 f"• Bei Verlust: -{stake_info['adjusted_percentage']:.1f}% Bankroll"
             )
 
-
 def display_simulation_section(result: Dict, key_suffix: str = ""):
     """
     Zeigt eine Monte-Carlo-Spielsimulation auf Basis der bereits berechneten
@@ -600,7 +600,6 @@ def display_simulation_section(result: Dict, key_suffix: str = ""):
                 "Beide Werte basieren auf denselben μ-Werten und derselben Poisson-Annahme — "
                 "kleine Abweichungen sind reines Simulationsrauschen und schrumpfen mit mehr Durchgängen."
             )
-
 
 def display_results(result: Dict, key_suffix: str = ""):
     """
@@ -1152,7 +1151,6 @@ def display_results(result: Dict, key_suffix: str = ""):
         except Exception as e:
             st.warning(f"⚠️ Radar-Chart nicht verfügbar: {str(e)}")
             st.info("Das Team-Radar-Chart benötigt vollständige Match-Daten.")
-
 
 def display_risk_distribution(all_results: List[Dict]):
     """
