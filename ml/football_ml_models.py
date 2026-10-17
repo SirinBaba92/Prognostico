@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from typing import Dict, Tuple, Optional
-
+import streamlit as st
 
 class FootballMLModels:
     """
@@ -318,19 +318,13 @@ class FootballMLModels:
             'confidence': confidence * 100
         }
 
-
-# Singleton Instance
-_ml_models_instance = None
-
-
+@st.cache_resource
 def get_ml_models(models_dir: str = "models") -> FootballMLModels:
     """
-    Gibt Singleton-Instanz der ML-Models zurück
+    Gibt die ML-Models zurück. 
+    WICHTIG: @st.cache_resource sorgt dafür, dass die Modelle nur EINMAL 
+    von der Festplatte geladen werden und dann dauerhaft im RAM bleiben.
     """
-    global _ml_models_instance
-    
-    if _ml_models_instance is None:
-        _ml_models_instance = FootballMLModels(models_dir)
-        _ml_models_instance.load_models()
-    
+    _ml_models_instance = FootballMLModels(models_dir)
+    _ml_models_instance.load_models()
     return _ml_models_instance
