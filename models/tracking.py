@@ -8,7 +8,6 @@ from typing import Dict, List, Optional
 from data.google_sheets import connect_to_sheets, get_tracking_sheet_id
 from data.models import MatchData, ExtendedMatchData, TeamStats
 
-
 def save_prediction_to_sheets(
     match_info: Dict,
     probabilities: Dict,
@@ -128,7 +127,6 @@ def save_prediction_to_sheets(
         st.error(f"❌ Fehler beim Speichern: {str(e)}")
         return False
 
-
 def update_match_result_in_sheets(match_str: str, actual_score: str) -> bool:
     """
     Aktualisiert das tatsächliche Ergebnis in PREDICTIONS Sheet
@@ -205,7 +203,6 @@ def update_match_result_in_sheets(match_str: str, actual_score: str) -> bool:
         st.error(f"❌ Fehler beim Eintragen des Ergebnisses: {str(e)}")
         return False
 
-
 def get_match_info_by_id(match_id: str) -> Optional[Dict]:
     """
     Holt Match-Informationen aus PREDICTIONS Sheet
@@ -260,7 +257,6 @@ def get_match_info_by_id(match_id: str) -> Optional[Dict]:
     except Exception as e:
         st.error(f"❌ Fehler beim Laden der Match-Info: {e}")
         return None
-
 
 def save_historical_match(historical_match: Dict) -> bool:
     """
@@ -411,7 +407,6 @@ def save_historical_match(historical_match: Dict) -> bool:
         st.error(f"❌ Fehler beim Speichern: {str(e)}")
         return False
 
-
 def create_historical_sheet(service, sheet_id: str) -> bool:
     """
     Erstellt das HISTORICAL_DATA Sheet mit Headern
@@ -467,7 +462,6 @@ def create_historical_sheet(service, sheet_id: str) -> bool:
     except Exception as e:
         st.error(f"❌ Fehler beim Erstellen des HISTORICAL_DATA Sheets: {e}")
         return False
-
 
 def save_historical_directly(
     match_data: MatchData,
@@ -582,7 +576,7 @@ def save_historical_directly(
         st.error(f"❌ Fehler beim direkten Speichern: {str(e)}")
         return False
 
-
+@st.cache_data(ttl=300)
 def load_historical_matches_from_sheets() -> List[Dict]:
     """
     Lädt historische Matches für ML-Training
