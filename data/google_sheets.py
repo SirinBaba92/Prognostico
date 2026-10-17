@@ -12,7 +12,7 @@ from googleapiclient.discovery import build
 
 from config.constants import DRIVE_SCOPES, SHEETS_SCOPES
 
-
+@st.cache_resource
 def connect_to_sheets(readonly: bool = True):
     """
     Verbindet sich mit Google Sheets API
@@ -34,7 +34,7 @@ def connect_to_sheets(readonly: bool = True):
         st.error(f"❌ Fehler bei Google Sheets Verbindung: {e}")
         return None
 
-
+@st.cache_resource
 def connect_to_drive():
     """
     Verbindet sich mit Google Drive API
@@ -53,9 +53,7 @@ def connect_to_drive():
         st.error(f"❌ Fehler bei Google Drive Verbindung: {e}")
         return None
 
-
 DATE_NAME_RE = re.compile(r"^\d{2}\.\d{2}\.\d{4}$")
-
 
 @st.cache_data(ttl=300)
 def list_daily_sheets_in_folder(folder_id: str) -> Dict[str, str]:
@@ -104,7 +102,6 @@ def list_daily_sheets_in_folder(folder_id: str) -> Dict[str, str]:
 
     return date_to_id
 
-
 @st.cache_data(ttl=300)
 def list_match_tabs_for_day(sheet_id: str) -> List[str]:
     """
@@ -130,7 +127,6 @@ def list_match_tabs_for_day(sheet_id: str) -> List[str]:
     sheets_sorted = sorted(sheets, key=lambda s: s["properties"].get("index", 0))
     return [s["properties"]["title"] for s in sheets_sorted]
 
-
 @st.cache_data(ttl=300)
 def read_sheet_range(sheet_id: str, a1_range: str) -> List[List[str]]:
     """
@@ -154,13 +150,11 @@ def read_sheet_range(sheet_id: str, a1_range: str) -> List[List[str]]:
     )
     return resp.get("values", [])
 
-
 def parse_date(d: str) -> date:
     """
     Parst Datumsstring im Format dd.mm.yyyy
     """
     return datetime.strptime(d, "%d.%m.%Y").date()
-
 
 @st.cache_resource
 def get_all_worksheets(sheet_url: str):
@@ -184,7 +178,6 @@ def get_all_worksheets(sheet_url: str):
     except Exception as e:
         st.error(f"❌ Fehler: {e}")
         return None
-
 
 @st.cache_data(ttl=300)
 def read_worksheet_data(sheet_url: str, sheet_name: str) -> Optional[str]:
@@ -215,7 +208,6 @@ def read_worksheet_data(sheet_url: str, sheet_name: str) -> Optional[str]:
         st.error(f"❌ Fehler: {e}")
         return None
 
-
 @st.cache_resource
 def get_all_worksheets_by_id(spreadsheet_id: str):
     """
@@ -234,7 +226,6 @@ def get_all_worksheets_by_id(spreadsheet_id: str):
     except Exception as e:
         st.error(f"❌ Fehler: {e}")
         return None
-
 
 @st.cache_data(ttl=300)
 def read_worksheet_text_by_id(spreadsheet_id: str, sheet_name: str) -> Optional[str]:
@@ -263,7 +254,6 @@ def read_worksheet_text_by_id(spreadsheet_id: str, sheet_name: str) -> Optional[
     except Exception as e:
         st.error(f"❌ Fehler: {e}")
         return None
-
 
 @st.cache_data(ttl=300)
 def read_worksheet_text_range_by_id(
@@ -296,7 +286,6 @@ def read_worksheet_text_range_by_id(
         st.error(f"❌ Fehler: {e}")
         return None
 
-
 def get_tracking_sheet_id() -> Optional[str]:
     """
     Holt die Tracking Sheet ID aus secrets (mit Fallbacks)
@@ -309,7 +298,6 @@ def get_tracking_sheet_id() -> Optional[str]:
         or tracking.get("sheet_id_v48")
         or tracking.get("sheet_id_v47")
     )
-
 
 @st.cache_data(ttl=300)
 def read_worksheet_values_range_by_id(
@@ -334,7 +322,6 @@ def read_worksheet_values_range_by_id(
         return result.get("values", [])
     except Exception:
         return None
-
 
 @st.cache_data(ttl=300)
 def batch_get_worksheet_values_ranges_by_id(
