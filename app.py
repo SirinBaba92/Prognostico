@@ -380,6 +380,17 @@ def main():
     # ein einzelner DB-Query statt N Sheet-Reads)
     match_index = get_match_index_for_date(selected_date)
 
+    # ===================================================================
+    # NEU: Chronologische Sortierung nach Anstoßzeit (Kickoff)
+    # Stellt sicher, dass Spiele, die als nächstes starten, ganz oben stehen
+    # (z.B. MLS um 01:00 Uhr), anstatt am Ende des Alphabets (unter "U" für USA).
+    # ===================================================================
+    if match_index:
+        match_index = sorted(
+            match_index, 
+            key=lambda m: str(m.get("kickoff") or "99:99")
+        )
+
     if not match_index:
         st.warning(f"⚠️ Keine Matches für {selected_date_str} gefunden!")
         st.stop()
